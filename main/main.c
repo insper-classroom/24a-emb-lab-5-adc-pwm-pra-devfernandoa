@@ -17,14 +17,25 @@
 
 #define JOY_X_PIN 26
 #define JOY_Y_PIN 27
-#define DEAD_ZONE 100
+#define DEAD_ZONE 170
 
 QueueHandle_t xQueueAdc;
 
 typedef struct adc {
-    int axis;
+    char axis;
     int val;
 } adc_t;
+
+void write_package(adc_t data) {
+    int val = data.val;
+    int msb = val >> 8;
+    int lsb = val & 0xFF;
+
+    uart_putc_raw(uart0, data.axis);
+    uart_putc_raw(uart0, msb);
+    uart_putc_raw(uart0, lsb);
+    uart_putc_raw(uart0, -1);
+}
 
 void uart_task(void *p) {
     adc_t data;
@@ -33,18 +44,17 @@ void uart_task(void *p) {
     while (1) {
         xQueueReceive(xQueueAdc, &data, portMAX_DELAY);
 
-        // Envio do byte de sincronização
-        uart_puts(UART_ID, &sync_byte);
+        write_package(data); // Envio dos dados
+    }
+}
 
-        // Formatação dos dados
-        uint8_t buffer[4];
-        buffer[0] = data.axis;
-        buffer[1] = data.val >> 8;   // MSB
-        buffer[2] = data.val & 0xFF; // LSB
-        buffer[3] = -1;              // EOP
-
-        // Envio dos dados pela UART
-        uart_puts(UART_ID, buffer);
+int transform_value(int val) {
+    val -= 2048;                // Mudança de escala
+    val /= 8;                   // Divisão por 8
+    if (abs(val) < DEAD_ZONE) { // Zona morta
+        return 0;
+    } else {
+        return val / 100;
     }
 }
 
@@ -57,9 +67,11 @@ void x_task(void *p) {
 
     while (1) {
         adc_select_input(0);
-        data.val = adc_read();                       // Leitura do valor do joystick no eixo X
-        xQueueSend(xQueueAdc, &data, portMAX_DELAY); // Envio dos dados para a fila
-        vTaskDelay(pdMS_TO_TICKS(10));               // Delay para evitar sobrecarga
+        int raw_val = adc_read();            // Leitura do valor do joystick no eixo X
+        data.val = transform_value(raw_val); // Transformação do valor
+        if (data.val != 0)
+            xQueueSend(xQueueAdc, &data, portMAX_DELAY); // Envio dos dados para a fila
+        vTaskDelay(pdMS_TO_TICKS(100));                  // Delay para evitar sobrecarga
     }
 }
 
@@ -72,14 +84,22 @@ void y_task(void *p) {
 
     while (1) {
         adc_select_input(1);
-        data.val = adc_read();                       // Leitura do valor do joystick no eixo Y
-        xQueueSend(xQueueAdc, &data, portMAX_DELAY); // Envio dos dados para a fila
-        vTaskDelay(pdMS_TO_TICKS(10));               // Delay para evitar sobrecarga
+        int raw_val = adc_read();            // Leitura do valor do joystick no eixo Y
+        data.val = transform_value(raw_val); // Transformação do valor
+        if (data.val != 0)
+            xQueueSend(xQueueAdc, &data, portMAX_DELAY); // Envio dos dados para a fila
+        vTaskDelay(pdMS_TO_TICKS(100));                  // Delay para evitar sobrecarga
     }
 }
 
-int main() {
+void main() {
     stdio_init_all();
+    uart_init(uart0, 9600);
+
+    // Inicialização do ADC e dos pinos do joystick
+    adc_init();
+    adc_gpio_init(JOY_X_PIN);
+    adc_gpio_init(JOY_Y_PIN);
 
     xQueueAdc = xQueueCreate(32, sizeof(adc_t));
 

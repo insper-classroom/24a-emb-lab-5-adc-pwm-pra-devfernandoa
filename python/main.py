@@ -1,7 +1,7 @@
 import serial
 import uinput
 
-ser = serial.Serial('/dev/ttyACM0', 115200)
+ser = serial.Serial('/dev/ttyACM0', 9600)
 
 # Create new mouse device
 device = uinput.Device([
